@@ -5,8 +5,8 @@ import { Hero } from "@/components/home/hero";
 import { WhyToad } from "@/components/home/why-toad";
 import { TokenHub } from "@/components/home/token-hub";
 import { DashboardStats } from "@/components/home/dashboard-stats";
-import { WhaleFlowChart } from "@/components/whales/whale-flow-chart";
 import { WhaleFeed } from "@/components/whales/whale-feed";
+import { AirdropChecker } from "@/components/whales/airdrop-checker";
 import { TopWhales } from "@/components/whales/top-whales";
 import { ToadJourney } from "@/components/journey/toad-journey";
 import { PersonalityTeaser } from "@/components/traders/personality-teaser";
@@ -33,12 +33,12 @@ export default function DashboardPage() {
         <section className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:gap-6">
           <div className="min-w-0">
             <SectionHeading
-              eyebrow="Whale flow"
-              title="Are the whales buying or selling?"
-              subtitle="Net USD flow from wallets trading above $1,000, bucketed over time."
+              eyebrow="Airdrop checker"
+              title="Was this wallet airdropped $TOAD?"
+              subtitle="Paste a wallet to verify whether it appears in the Dune TOAD transfer/airdrop table."
               showDemoTag
             />
-            <WhaleFlowChart />
+            <AirdropChecker />
           </div>
 
           <div className="min-w-0">

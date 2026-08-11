@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { WhaleFlowChart } from "@/components/whales/whale-flow-chart";
+import { AirdropChecker } from "@/components/whales/airdrop-checker";
 import { WhaleFeed } from "@/components/whales/whale-feed";
 import { TopWhales } from "@/components/whales/top-whales";
 import { SectionHeading } from "@/components/shared/section-heading";
@@ -21,11 +21,11 @@ export default function WhalesPage() {
 
       <section>
         <SectionHeading
-          title="Whale Flow"
-          subtitle="Buys above the line, sells below. Net flow tells you whether large wallets are accumulating or distributing."
+          title="Airdrop checker"
+          subtitle="Confirm whether a wallet received $TOAD in the Dune transfer/airdrop dataset."
           showDemoTag
         />
-        <WhaleFlowChart />
+        <AirdropChecker />
       </section>
 
       <section>

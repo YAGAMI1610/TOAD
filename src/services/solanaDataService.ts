@@ -32,7 +32,6 @@ import type {
   Wallet,
   WhaleActivity,
   WhaleFlowPoint,
-  WhaleFlowSummary,
 } from "@/lib/types";
 import { dataLayerConfig, hasChainCredentials, hasRpcCredentials, mockDelay } from "./config";
 
@@ -42,12 +41,6 @@ const DAY = 24 * HOUR;
 /** Below this USD notional a trade isn't "whale" activity. */
 export const WHALE_THRESHOLD_USD = 1_000;
 
-export const FLOW_RANGES: Record<FlowRange, { ms: number; buckets: number; bucketLabel: string }> = {
-  "1H": { ms: HOUR, buckets: 12, bucketLabel: "5m" },
-  "6H": { ms: 6 * HOUR, buckets: 12, bucketLabel: "30m" },
-  "24H": { ms: DAY, buckets: 12, bucketLabel: "2h" },
-  "7D": { ms: 7 * DAY, buckets: 14, bucketLabel: "12h" },
-};
 
 function toHolding(amount: number, address: string, change24hPct: number, costBasisUsd: number | null): TokenHolding {
   return {
@@ -129,6 +122,32 @@ class MockToadDataSource implements ToadDataSource {
     return this.filterActivity(query);
   }
 
+  async getWhaleFlow(range: FlowRange): Promise<{ series: WhaleFlowPoint[]; netUsd: number; buyCount: number; sellCount: number; uniqueWallets: number; buysUsd: number; sellsUsd: number }> {
+    await mockDelay();
+    const activity = this.allActivity().filter((a) => a.timestamp >= Date.now() - {"1H": HOUR, "6H": 6 * HOUR, "24H": DAY, "7D": 7 * DAY}[range]);
+    const points = Array.from({ length: range === "7D" ? 7 : Number(range.replace("H", "")) }, (_, index) => {
+      const bucketSize = range === "7D" ? DAY : HOUR;
+      const bucketStart = Date.now() - (index + 1) * bucketSize;
+      const bucketEnd = Date.now() - index * bucketSize;
+      const bucket = activity.filter((a) => a.timestamp >= bucketStart && a.timestamp < bucketEnd);
+      return {
+        timestamp: bucketStart,
+        buysUsd: bucket.filter((a) => a.side === "buy").reduce((sum, a) => sum + a.usdValue, 0),
+        sellsUsd: bucket.filter((a) => a.side === "sell").reduce((sum, a) => sum + a.usdValue, 0),
+        netUsd: bucket.filter((a) => a.side === "buy").reduce((sum, a) => sum + a.usdValue, 0) - bucket.filter((a) => a.side === "sell").reduce((sum, a) => sum + a.usdValue, 0),
+      };
+    }).reverse();
+
+    const buysUsd = activity.filter((a) => a.side === "buy").reduce((sum, a) => sum + a.usdValue, 0);
+    const sellsUsd = activity.filter((a) => a.side === "sell").reduce((sum, a) => sum + a.usdValue, 0);
+    const netUsd = buysUsd - sellsUsd;
+    const buyCount = activity.filter((a) => a.side === "buy").length;
+    const sellCount = activity.filter((a) => a.side === "sell").length;
+    const uniqueWallets = new Set(activity.map((a) => a.wallet)).size;
+
+    return { series: points, netUsd, buyCount, sellCount, uniqueWallets, buysUsd, sellsUsd };
+  }
+
   /** Synchronous filter used by both the initial fetch and client-side refiltering. */
   filterActivity(query: FeedQuery = {}): WhaleActivity[] {
     const { side = "all", minUsd = WHALE_THRESHOLD_USD, limit = 40, since } = query;
@@ -143,47 +162,6 @@ class MockToadDataSource implements ToadDataSource {
       .slice(0, limit);
   }
 
-  async getWhaleFlow(range: FlowRange): Promise<WhaleFlowSummary> {
-    await mockDelay(200, 460);
-    const { ms, buckets } = FLOW_RANGES[range];
-    const now = Date.now();
-    const start = now - ms;
-    const bucketMs = ms / buckets;
-
-    const inRange = this.allActivity().filter((a) => a.timestamp >= start && a.usdValue >= WHALE_THRESHOLD_USD);
-
-    const series: WhaleFlowPoint[] = Array.from({ length: buckets }, (_, i) => ({
-      timestamp: Math.round(start + i * bucketMs),
-      buysUsd: 0,
-      sellsUsd: 0,
-      netUsd: 0,
-    }));
-
-    for (const a of inRange) {
-      const idx = Math.min(buckets - 1, Math.max(0, Math.floor((a.timestamp - start) / bucketMs)));
-      if (a.side === "buy") series[idx].buysUsd += a.usdValue;
-      else series[idx].sellsUsd += a.usdValue;
-    }
-    for (const point of series) {
-      point.buysUsd = Math.round(point.buysUsd);
-      point.sellsUsd = Math.round(point.sellsUsd);
-      point.netUsd = point.buysUsd - point.sellsUsd;
-    }
-
-    const buysUsd = series.reduce((acc, p) => acc + p.buysUsd, 0);
-    const sellsUsd = series.reduce((acc, p) => acc + p.sellsUsd, 0);
-
-    return {
-      range,
-      buysUsd,
-      sellsUsd,
-      netUsd: buysUsd - sellsUsd,
-      buyCount: inRange.filter((a) => a.side === "buy").length,
-      sellCount: inRange.filter((a) => a.side === "sell").length,
-      uniqueWallets: new Set(inRange.map((a) => a.wallet)).size,
-      series,
-    };
-  }
 
   async getTopHolders(limit = 25): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {
     await mockDelay();
@@ -337,7 +315,7 @@ class RpcToadDataSource implements ToadDataSource {
   async getWhaleActivity(): Promise<WhaleActivity[]> {
     return this.notImplemented("getWhaleActivity");
   }
-  async getWhaleFlow(): Promise<WhaleFlowSummary> {
+  async getWhaleFlow(_range: FlowRange): Promise<{ series: WhaleFlowPoint[]; netUsd: number; buyCount: number; sellCount: number; uniqueWallets: number; buysUsd: number; sellsUsd: number }> {
     return this.notImplemented("getWhaleFlow");
   }
   async getTopHolders(limit = 25): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {
@@ -398,7 +376,7 @@ class HybridToadDataSource implements ToadDataSource {
   getWhaleActivity(query?: FeedQuery): Promise<WhaleActivity[]> {
     return this.fallback.getWhaleActivity(query);
   }
-  getWhaleFlow(range: FlowRange): Promise<WhaleFlowSummary> {
+  getWhaleFlow(range: FlowRange): Promise<{ series: WhaleFlowPoint[]; netUsd: number; buyCount: number; sellCount: number; uniqueWallets: number; buysUsd: number; sellsUsd: number }> {
     return this.fallback.getWhaleFlow(range);
   }
   getTopHolders(limit?: number): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {

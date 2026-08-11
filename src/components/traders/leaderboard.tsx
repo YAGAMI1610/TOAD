@@ -11,7 +11,6 @@ import { ErrorState, EmptyPond } from "@/components/shared/states";
 import { WalletAddress } from "@/components/shared/wallet-address";
 import { useAsync } from "@/lib/hooks";
 import { cn, formatUsd } from "@/lib/utils";
-import { solanaDataService } from "@/services/solanaDataService";
 import { PERSONALITY_ACCENT } from "@/components/traders/personality-accent";
 import type { LeaderboardEntry, LeaderboardTab } from "@/lib/types";
 
@@ -54,10 +53,16 @@ const GRID =
 export function Leaderboard({ limit = 25 }: { limit?: number }) {
   const [tab, setTab] = useState<LeaderboardTab>("top-pnl");
   const active = TABS.find((t) => t.id === tab)!;
-  const { data, status, error, reload } = useAsync(
-    () => solanaDataService.getLeaderboard(tab, limit),
-    [tab, limit]
-  );
+  const { data, status, error, reload } = useAsync(async () => {
+    const result = await fetch(`/api/leaderboard?tab=${encodeURIComponent(tab)}&limit=${encodeURIComponent(
+      String(limit)
+    )}`, { cache: "no-store" });
+    if (!result.ok) {
+      throw new Error(`Leaderboard API returned ${result.status}`);
+    }
+    const payload = await result.json();
+    return payload.entries as LeaderboardEntry[];
+  }, [tab, limit]);
 
   return (
     <div>

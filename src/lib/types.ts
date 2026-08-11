@@ -96,26 +96,22 @@ export interface WhaleActivity extends Trade {
   isNewPosition: boolean;
 }
 
+export type FlowRange = "1H" | "6H" | "24H" | "7D";
+
 export interface WhaleFlowPoint {
-  /** Bucket start, unix ms. */
   timestamp: number;
   buysUsd: number;
-  /** Positive magnitude; the chart negates it for display. */
   sellsUsd: number;
   netUsd: number;
 }
 
-export type FlowRange = "1H" | "6H" | "24H" | "7D";
-
-export interface WhaleFlowSummary {
-  range: FlowRange;
-  netUsd: number;
-  buysUsd: number;
-  sellsUsd: number;
-  buyCount: number;
-  sellCount: number;
-  uniqueWallets: number;
-  series: WhaleFlowPoint[];
+export interface AirdropCheckResult {
+  wallet: string;
+  airdropped: boolean;
+  /** Amount of $TOAD observed in the Dune query rows. */
+  amount: number;
+  /** Whether the result is based on the live Dune query or demo fallback. */
+  demo: boolean;
 }
 
 export interface WhaleStats24h {
@@ -300,7 +296,16 @@ export interface ToadDataSource {
   getToken(): Promise<TokenMeta>;
   getDashboard(): Promise<DashboardSnapshot>;
   getWhaleActivity(query?: FeedQuery): Promise<WhaleActivity[]>;
-  getWhaleFlow(range: FlowRange): Promise<WhaleFlowSummary>;
+  getWhaleFlow(range: FlowRange): Promise<{
+    series: WhaleFlowPoint[];
+    netUsd: number;
+    buyCount: number;
+    sellCount: number;
+    uniqueWallets: number;
+    buysUsd: number;
+    sellsUsd: number;
+  }>;
+
   getTopHolders(limit?: number): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>>;
   getTraderProfile(address: string): Promise<TraderProfile | null>;
   getLeaderboard(tab: LeaderboardTab, limit?: number): Promise<LeaderboardEntry[]>;

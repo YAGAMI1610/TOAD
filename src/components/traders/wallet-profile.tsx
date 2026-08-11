@@ -23,15 +23,19 @@ import {
   isValidSolanaAddress,
 } from "@/lib/utils";
 import { ANALYSIS_STEPS } from "@/lib/personality";
-import { solanaDataService } from "@/services/solanaDataService";
 import type { TraderProfile } from "@/lib/types";
 
 export function WalletProfile({ address }: { address: string }) {
   const valid = isValidSolanaAddress(address);
-  const { data, status, error, reload } = useAsync(
-    () => (valid ? solanaDataService.getTraderProfile(address) : Promise.resolve(null)),
-    [address]
-  );
+  const { data, status, error, reload } = useAsync(async () => {
+    if (!valid) return null;
+    const result = await fetch(`/api/trader/${encodeURIComponent(address)}`, { cache: "no-store" });
+    if (!result.ok) {
+      throw new Error(`Trader API returned ${result.status}`);
+    }
+    const payload = await result.json();
+    return payload.profile as TraderProfile | null;
+  }, [address]);
 
   if (!valid) {
     return (
