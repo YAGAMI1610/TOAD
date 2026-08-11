@@ -1,0 +1,277 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --radius: 0.9rem;
+    /* Accent as raw channels so rgba() can be composed in arbitrary CSS. */
+    --toad-rgb: 0 200 150;
+    --lily-rgb: 255 201 77;
+    --ember-rgb: 238 90 75;
+  }
+
+  * {
+    @apply border-white/5;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-ink-950 font-sans text-white/90 antialiased;
+    /* Layered pond ambience: emerald wash top-left, cool depth right, glow below. */
+    background-image:
+      radial-gradient(1000px 560px at 10% -10%, rgba(0, 200, 150, 0.13), transparent 60%),
+      radial-gradient(820px 480px at 94% 2%, rgba(59, 130, 246, 0.07), transparent 58%),
+      radial-gradient(700px 620px at 50% 116%, rgba(0, 200, 150, 0.07), transparent 62%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+    /* Slightly looser default leading — long-form copy in the story section
+       and metric explanations both read better with air. */
+    line-height: 1.6;
+  }
+
+  ::selection {
+    @apply bg-toad-500/30 text-white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-white/10;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-toad-400/70 ring-offset-2 ring-offset-ink-950;
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------------- */
+  /* Numerals                                                         */
+  /* ---------------------------------------------------------------- */
+
+  /* Tabular numerals — anywhere a number can tick without reflowing. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /**
+   * Headline metrics. Monospace + tabular so digits occupy identical width:
+   * an animated counter running 9 → 10 → 11 never nudges the layout.
+   */
+  .metric {
+    @apply font-mono tracking-[-0.03em];
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Text roles — one place to tune readability across the app         */
+  /* ---------------------------------------------------------------- */
+
+  .text-label {
+    @apply text-[10.5px] font-semibold uppercase tracking-[0.15em] text-white/45;
+  }
+  .text-body {
+    @apply text-[13.5px] leading-[1.65] text-white/55;
+  }
+  .text-body-lg {
+    @apply text-[15px] leading-[1.7] text-white/[0.62] sm:text-[15.5px];
+  }
+  .text-meta {
+    @apply text-[12px] leading-[1.5] text-white/45;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Glass surfaces                                                   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * True frosted glass: a low-alpha white fill that lets the pond gradients
+   * bleed through, saturated + blurred so it behaves like real glass rather
+   * than a flat translucent rectangle.
+   */
+  .glass {
+    @apply border border-white/[0.08] bg-white/[0.03];
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+
+  .glass-strong {
+    @apply border border-white/[0.11] bg-ink-900/70;
+    backdrop-filter: blur(26px) saturate(160%);
+    -webkit-backdrop-filter: blur(26px) saturate(160%);
+  }
+
+  /**
+   * The 1px accent hairline that rings every card. Kept as a ::after ring so it
+   * layers *over* the fill and stays crisp at any radius, and so hover can
+   * brighten it without touching the border-box.
+   */
+  .glass-ring {
+    position: relative;
+  }
+  .glass-ring::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      160deg,
+      rgba(var(--toad-rgb) / 0.28),
+      rgba(var(--toad-rgb) / 0.05) 38%,
+      rgba(255, 255, 255, 0.05) 62%,
+      rgba(var(--toad-rgb) / 0.14)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0.75;
+    transition: opacity 320ms ease;
+  }
+  .glass-ring:hover::after {
+    opacity: 1;
+  }
+
+  /* Hairline top highlight that reads as a light source above the card. */
+  .card-sheen {
+    position: relative;
+  }
+  .card-sheen::before {
+    content: "";
+    position: absolute;
+    inset-inline: 1.25rem;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Scroll rows                                                      */
+  /* ---------------------------------------------------------------- */
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Free-scrolling with snap points — proximity rather than mandatory so a
+     half-swipe never yanks the row back and fights the thumb. */
+  .snap-row {
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .snap-row > * {
+    scroll-snap-align: start;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Loading                                                          */
+  /* ---------------------------------------------------------------- */
+
+  /** Skeletons breathe in the accent colour, not grey. */
+  .skeleton {
+    @apply relative animate-pulse-accent overflow-hidden rounded-lg;
+    background-color: rgba(var(--toad-rgb) / 0.09);
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgba(var(--toad-rgb) / 0.16),
+      rgba(255, 255, 255, 0.05),
+      transparent
+    );
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Decorative                                                       */
+  /* ---------------------------------------------------------------- */
+
+  .text-gradient-toad {
+    @apply bg-gradient-to-br from-white via-toad-100 to-toad-400 bg-clip-text text-transparent;
+  }
+  .text-gradient-lily {
+    @apply bg-gradient-to-br from-white via-lily-200 to-lily-400 bg-clip-text text-transparent;
+  }
+
+  /* Masked grid used behind hero + journey sections. */
+  .grid-bg {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+  }
+
+  /**
+   * Pond texture for the story section: overlapping lily-pad discs plus a faint
+   * ripple lattice. Pure gradients, so it costs nothing and scales cleanly.
+   */
+  .pond-texture {
+    background-image:
+      radial-gradient(circle at 18% 24%, rgba(var(--toad-rgb) / 0.1) 0 8px, transparent 9px),
+      radial-gradient(circle at 74% 16%, rgba(var(--toad-rgb) / 0.07) 0 13px, transparent 14px),
+      radial-gradient(circle at 38% 76%, rgba(var(--toad-rgb) / 0.08) 0 11px, transparent 12px),
+      radial-gradient(circle at 88% 68%, rgba(var(--lily-rgb) / 0.05) 0 9px, transparent 10px),
+      radial-gradient(circle at 58% 42%, rgba(var(--toad-rgb) / 0.05) 0 16px, transparent 17px),
+      radial-gradient(ellipse 60% 45% at 50% 50%, rgba(var(--toad-rgb) / 0.05), transparent 70%);
+    background-size:
+      220px 220px,
+      340px 340px,
+      280px 280px,
+      300px 300px,
+      420px 420px,
+      100% 100%;
+  }
+}
+
+/* Recharts overrides — kill the default focus outline + soften the cursor. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+.recharts-cartesian-axis-tick text {
+  fill: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

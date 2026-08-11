@@ -1,0 +1,430 @@
+/**
+ * The single door between the UI and $TOAD chain data.
+ *
+ * Two implementations behind one interface:
+ *   - MockToadDataSource  — deterministic generated data (today)
+ *   - RpcToadDataSource   — Solana RPC + indexer (stubbed; drop credentials in)
+ *
+ * Components import `solanaDataService` and never touch `lib/mockData` directly.
+ */
+
+import {
+  createWhaleActivity,
+  getMockLeaderboardPool,
+  getMockProfile,
+  mockHolders,
+  mockPriceSnapshot,
+  mockWhaleActivity,
+  TOAD_TOKEN,
+} from "@/lib/mockData";
+import { isValidSolanaAddress } from "@/lib/utils";
+import { marketCapService } from "@/services/marketCapService";
+import type {
+  DashboardSnapshot,
+  FeedQuery,
+  FlowRange,
+  LeaderboardEntry,
+  LeaderboardTab,
+  TokenHolding,
+  TokenMeta,
+  ToadDataSource,
+  TraderProfile,
+  Wallet,
+  WhaleActivity,
+  WhaleFlowPoint,
+  WhaleFlowSummary,
+} from "@/lib/types";
+import { dataLayerConfig, hasChainCredentials, hasRpcCredentials, mockDelay } from "./config";
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+/** Below this USD notional a trade isn't "whale" activity. */
+export const WHALE_THRESHOLD_USD = 1_000;
+
+export const FLOW_RANGES: Record<FlowRange, { ms: number; buckets: number; bucketLabel: string }> = {
+  "1H": { ms: HOUR, buckets: 12, bucketLabel: "5m" },
+  "6H": { ms: 6 * HOUR, buckets: 12, bucketLabel: "30m" },
+  "24H": { ms: DAY, buckets: 12, bucketLabel: "2h" },
+  "7D": { ms: 7 * DAY, buckets: 14, bucketLabel: "12h" },
+};
+
+function toHolding(amount: number, address: string, change24hPct: number, costBasisUsd: number | null): TokenHolding {
+  return {
+    address,
+    mint: TOAD_TOKEN.mint,
+    amount,
+    usdValue: amount * mockPriceSnapshot.priceUsd,
+    supplyPct: (amount / TOAD_TOKEN.totalSupply) * 100,
+    change24hPct,
+    costBasisUsd,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Mock implementation                                                 */
+/* ------------------------------------------------------------------ */
+
+class MockToadDataSource implements ToadDataSource {
+  readonly isDemo = true;
+
+  /** Events minted by the live simulator, newest first. */
+  private liveEvents: WhaleActivity[] = [];
+  private seedCounter = 900_001;
+
+  private allActivity(): WhaleActivity[] {
+    return [...this.liveEvents, ...mockWhaleActivity];
+  }
+
+  async getToken(): Promise<TokenMeta> {
+    await mockDelay(60, 140);
+    return TOAD_TOKEN;
+  }
+
+  async getDashboard(): Promise<DashboardSnapshot> {
+    await mockDelay();
+    const now = Date.now();
+    const activity = this.allActivity();
+    const last24h = activity.filter((a) => a.timestamp >= now - DAY);
+    const prev24h = activity.filter((a) => a.timestamp >= now - 2 * DAY && a.timestamp < now - DAY);
+
+    const sum = (list: WhaleActivity[], side: "buy" | "sell") =>
+      list.filter((a) => a.side === side).reduce((acc, a) => acc + a.usdValue, 0);
+
+    const buys = sum(last24h, "buy");
+    const sells = sum(last24h, "sell");
+    const prevNet = sum(prev24h, "buy") - sum(prev24h, "sell");
+    const net = buys - sells;
+
+    const biggestBuy = last24h
+      .filter((a) => a.side === "buy")
+      .reduce((best, a) => (a.usdValue > best.usdValue ? a : best), last24h.find((a) => a.side === "buy")!);
+    const biggestSell = last24h
+      .filter((a) => a.side === "sell")
+      .reduce((best, a) => (a.usdValue > best.usdValue ? a : best), last24h.find((a) => a.side === "sell")!);
+
+    const top = mockHolders[0];
+
+    return {
+      whales24h: {
+        largeBuysUsd: buys,
+        largeBuyCount: last24h.filter((a) => a.side === "buy").length,
+        largeSellsUsd: sells,
+        largeSellCount: last24h.filter((a) => a.side === "sell").length,
+        netFlowUsd: net,
+        netFlowChangePct: prevNet !== 0 ? ((net - prevNet) / Math.abs(prevNet)) * 100 : 0,
+      },
+      topHolder: {
+        wallet: top.wallet,
+        holding: toHolding(top.balance, top.wallet.address, top.change24hPct, top.costBasisUsd),
+      },
+      biggestBuy,
+      biggestSell,
+      price: { ...mockPriceSnapshot, updatedAt: Date.now() },
+    };
+  }
+
+  async getWhaleActivity(query: FeedQuery = {}): Promise<WhaleActivity[]> {
+    await mockDelay();
+    return this.filterActivity(query);
+  }
+
+  /** Synchronous filter used by both the initial fetch and client-side refiltering. */
+  filterActivity(query: FeedQuery = {}): WhaleActivity[] {
+    const { side = "all", minUsd = WHALE_THRESHOLD_USD, limit = 40, since } = query;
+    return this.allActivity()
+      .filter((a) => a.usdValue >= minUsd)
+      .filter((a) => (since ? a.timestamp > since : true))
+      .filter((a) => {
+        if (side === "all") return true;
+        if (side === "top-holders") return typeof a.walletRank === "number" && a.walletRank <= 25;
+        return a.side === side;
+      })
+      .slice(0, limit);
+  }
+
+  async getWhaleFlow(range: FlowRange): Promise<WhaleFlowSummary> {
+    await mockDelay(200, 460);
+    const { ms, buckets } = FLOW_RANGES[range];
+    const now = Date.now();
+    const start = now - ms;
+    const bucketMs = ms / buckets;
+
+    const inRange = this.allActivity().filter((a) => a.timestamp >= start && a.usdValue >= WHALE_THRESHOLD_USD);
+
+    const series: WhaleFlowPoint[] = Array.from({ length: buckets }, (_, i) => ({
+      timestamp: Math.round(start + i * bucketMs),
+      buysUsd: 0,
+      sellsUsd: 0,
+      netUsd: 0,
+    }));
+
+    for (const a of inRange) {
+      const idx = Math.min(buckets - 1, Math.max(0, Math.floor((a.timestamp - start) / bucketMs)));
+      if (a.side === "buy") series[idx].buysUsd += a.usdValue;
+      else series[idx].sellsUsd += a.usdValue;
+    }
+    for (const point of series) {
+      point.buysUsd = Math.round(point.buysUsd);
+      point.sellsUsd = Math.round(point.sellsUsd);
+      point.netUsd = point.buysUsd - point.sellsUsd;
+    }
+
+    const buysUsd = series.reduce((acc, p) => acc + p.buysUsd, 0);
+    const sellsUsd = series.reduce((acc, p) => acc + p.sellsUsd, 0);
+
+    return {
+      range,
+      buysUsd,
+      sellsUsd,
+      netUsd: buysUsd - sellsUsd,
+      buyCount: inRange.filter((a) => a.side === "buy").length,
+      sellCount: inRange.filter((a) => a.side === "sell").length,
+      uniqueWallets: new Set(inRange.map((a) => a.wallet)).size,
+      series,
+    };
+  }
+
+  async getTopHolders(limit = 25): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {
+    await mockDelay();
+    return mockHolders.slice(0, limit).map((h) => ({
+      wallet: h.wallet,
+      holding: toHolding(h.balance, h.wallet.address, h.change24hPct, h.costBasisUsd),
+    }));
+  }
+
+  async getTraderProfile(address: string): Promise<TraderProfile | null> {
+    await mockDelay(700, 1500);
+    const trimmed = address.trim();
+    if (!isValidSolanaAddress(trimmed)) return null;
+    return getMockProfile(trimmed);
+  }
+
+  async getLeaderboard(tab: LeaderboardTab, limit = 25): Promise<LeaderboardEntry[]> {
+    await mockDelay();
+    const pool = [...getMockLeaderboardPool()];
+
+    const comparators: Record<LeaderboardTab, (a: LeaderboardEntry, b: LeaderboardEntry) => number> = {
+      "top-pnl": (a, b) => b.pnlUsd - a.pnlUsd,
+      // Require a real sample size before a win rate means anything.
+      "best-win-rate": (a, b) =>
+        b.winRatePct - a.winRatePct || b.trades - a.trades,
+      "biggest-winners": (a, b) => b.bestTradeUsd - a.bestTradeUsd,
+      "biggest-losers": (a, b) => a.worstTradeUsd - b.worstTradeUsd,
+      "most-active": (a, b) => b.trades - a.trades,
+    };
+
+    const filtered = tab === "best-win-rate" ? pool.filter((e) => e.trades >= 10) : pool;
+
+    return filtered
+      .sort(comparators[tab])
+      .slice(0, limit)
+      .map((entry, i) => ({ ...entry, rank: i + 1 }));
+  }
+
+  async searchWallets(query: string): Promise<Wallet[]> {
+    await mockDelay(120, 260);
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return mockHolders
+      .filter(
+        (h) =>
+          h.wallet.address.toLowerCase().includes(q) ||
+          (h.wallet.label ?? "").toLowerCase().includes(q)
+      )
+      .slice(0, 8)
+      .map((h) => h.wallet);
+  }
+
+  subscribeWhaleActivity(handler: (activity: WhaleActivity) => void): () => void {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      // Irregular cadence reads as real chain activity; a fixed interval doesn't.
+      const wait = 5_500 + Math.random() * 11_000;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        const event = createWhaleActivity(this.seedCounter++ * 7919, Date.now());
+        this.liveEvents = [event, ...this.liveEvents].slice(0, 200);
+        handler(event);
+        schedule();
+      }, wait);
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Real implementation (stub)                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Wiring guide for going live:
+ *   getTopHolders      -> RPC getTokenLargestAccounts + getMultipleAccounts
+ *   getWhaleActivity   -> indexer query for parsed swaps on the mint, USD-priced
+ *   getWhaleFlow       -> aggregate the same swaps into time buckets
+ *   getTraderProfile   -> full transfer history for the wallet, then reuse
+ *                         buildTraderProfile() from lib/personality verbatim
+ *   subscribe…         -> Helius webhook / Yellowstone gRPC stream
+ *
+ * The personality engine and every component work unchanged — they only need
+ * these shapes to be filled with real numbers.
+ */
+const TOKEN_DECIMALS = 6;
+
+class RpcToadDataSource implements ToadDataSource {
+  readonly isDemo = false;
+
+  constructor(private readonly rpcUrl: string, private readonly indexerUrl: string, private readonly mint: string) {}
+
+  private notImplemented(method: string): never {
+    throw new Error(
+      `solanaDataService.${method}() is not implemented yet. RPC=${this.rpcUrl} indexer=${this.indexerUrl} mint=${this.mint}`
+    );
+  }
+
+  private async callRpc(method: string, params: unknown[]) {
+    const response = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC request failed ${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+    if (payload.error) {
+      throw new Error(`RPC error: ${payload.error.message ?? JSON.stringify(payload.error)}`);
+    }
+
+    return payload.result;
+  }
+
+  private parseTokenAmount(account: any): number {
+    if (typeof account?.uiAmount === "number") {
+      return account.uiAmount;
+    }
+
+    if (typeof account?.uiAmountString === "string" && account.uiAmountString.length > 0) {
+      const parsed = Number(account.uiAmountString);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+
+    if (typeof account?.amount === "string") {
+      const rawAmount = Number(account.amount);
+      if (!Number.isNaN(rawAmount)) {
+        return rawAmount / 10 ** TOKEN_DECIMALS;
+      }
+    }
+
+    return 0;
+  }
+
+  async getToken(): Promise<TokenMeta> {
+    return this.notImplemented("getToken");
+  }
+  async getDashboard(): Promise<DashboardSnapshot> {
+    return this.notImplemented("getDashboard");
+  }
+  async getWhaleActivity(): Promise<WhaleActivity[]> {
+    return this.notImplemented("getWhaleActivity");
+  }
+  async getWhaleFlow(): Promise<WhaleFlowSummary> {
+    return this.notImplemented("getWhaleFlow");
+  }
+  async getTopHolders(limit = 25): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {
+    const result = await this.callRpc("getTokenLargestAccounts", [this.mint]);
+    const accounts = Array.isArray(result?.value) ? result.value : [];
+    const priceSnapshot = await marketCapService.getPrice().catch(() => mockPriceSnapshot);
+
+    return accounts.slice(0, limit).map((account: any, index: number) => {
+      const amount = this.parseTokenAmount(account);
+      const address = account?.address ?? "";
+
+      const wallet: Wallet = {
+        address,
+        badges: [],
+        firstSeen: Date.now(),
+        lastActive: Date.now(),
+        holderRank: index + 1,
+      };
+
+      const holding: TokenHolding = {
+        address,
+        mint: this.mint,
+        amount,
+        usdValue: amount * priceSnapshot.priceUsd,
+        supplyPct: (amount / TOAD_TOKEN.totalSupply) * 100,
+        change24hPct: 0,
+        costBasisUsd: null,
+      };
+
+      return { wallet, holding };
+    });
+  }
+  async getTraderProfile(): Promise<TraderProfile | null> {
+    return this.notImplemented("getTraderProfile");
+  }
+  async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    return this.notImplemented("getLeaderboard");
+  }
+  async searchWallets(): Promise<Wallet[]> {
+    return this.notImplemented("searchWallets");
+  }
+  subscribeWhaleActivity(): () => void {
+    return () => {};
+  }
+}
+
+class HybridToadDataSource implements ToadDataSource {
+  readonly isDemo = false;
+
+  constructor(private readonly rpcSource: RpcToadDataSource, private readonly fallback: ToadDataSource) {}
+
+  getToken(): Promise<TokenMeta> {
+    return this.fallback.getToken();
+  }
+  getDashboard(): Promise<DashboardSnapshot> {
+    return this.fallback.getDashboard();
+  }
+  getWhaleActivity(query?: FeedQuery): Promise<WhaleActivity[]> {
+    return this.fallback.getWhaleActivity(query);
+  }
+  getWhaleFlow(range: FlowRange): Promise<WhaleFlowSummary> {
+    return this.fallback.getWhaleFlow(range);
+  }
+  getTopHolders(limit?: number): Promise<Array<{ wallet: Wallet; holding: TokenHolding }>> {
+    return this.rpcSource.getTopHolders(limit);
+  }
+  getTraderProfile(address: string): Promise<TraderProfile | null> {
+    return this.fallback.getTraderProfile(address);
+  }
+  getLeaderboard(tab: LeaderboardTab, limit?: number): Promise<LeaderboardEntry[]> {
+    return this.fallback.getLeaderboard(tab, limit);
+  }
+  searchWallets(query: string): Promise<Wallet[]> {
+    return this.fallback.searchWallets(query);
+  }
+  subscribeWhaleActivity(handler: (activity: WhaleActivity) => void): () => void {
+    return this.fallback.subscribeWhaleActivity(handler);
+  }
+}
+
+export const solanaDataService: ToadDataSource = hasChainCredentials
+  ? new RpcToadDataSource(dataLayerConfig.rpcUrl!, dataLayerConfig.indexerUrl!, dataLayerConfig.mint!)
+  : hasRpcCredentials
+  ? new HybridToadDataSource(
+      new RpcToadDataSource(dataLayerConfig.rpcUrl!, dataLayerConfig.indexerUrl ?? "", dataLayerConfig.mint!),
+      new MockToadDataSource()
+    )
+  : new MockToadDataSource();
+
+export const toadToken = TOAD_TOKEN;
