@@ -276,6 +276,22 @@ export async function buildTraderProfile(address: string): Promise<TraderProfile
       risk: 56,
       patience: 48,
       activity: 60,
+      profitability: 50,
+    },
+    personality: {
+      id: "sniper-toad",
+      name: "Sniper Toad",
+      emoji: "🎯",
+      tagline: "Based on Dune transfer history.",
+      description: "Derived from on-chain TOAD transfer data.",
+      quote: "I move in the swamp.",
+      accent: "ember",
+      confidence: 72,
+      reasons: [
+        `Total TOAD moved: ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        `${trades.length} transfer${trades.length === 1 ? "" : "s"} observed in the dataset.`,
+      ],
+      alternates: [],
     },
     trades,
   };
