@@ -1,6 +1,24 @@
+import fs from "node:fs";
+import path from "node:path";
 import { marketCapService } from "@/services/marketCapService";
 import { TOAD_TOKEN } from "@/lib/mockData";
 import type { LeaderboardEntry, TraderProfile, Trade, Wallet } from "@/lib/types";
+
+const WALLET_COLUMN_CANDIDATES = ["destination_address", "wallet", "address", "recipient", "to_address", "owner", "from"];
+const AMOUNT_COLUMN_CANDIDATES = ["tokens_airdropped", "airdrop_amount", "token_amount", "to_amount", "amount", "value"];
+
+let localAirdropCsvCache: string | null = null;
+
+function loadLocalAirdropCsv(): string {
+  if (localAirdropCsvCache !== null) return localAirdropCsvCache;
+  try {
+    const csvPath = path.join(process.cwd(), "src", "data", "airdrop-table.csv");
+    localAirdropCsvCache = fs.readFileSync(csvPath, "utf-8");
+  } catch {
+    localAirdropCsvCache = "";
+  }
+  return localAirdropCsvCache;
+}
 
 export type DuneCsvRow = Record<string, string>;
 
@@ -51,7 +69,7 @@ function parseCsv(csv: string): DuneCsvRow[] {
 }
 
 export async function fetchDuneQueryRows(_queryId: string): Promise<DuneCsvRow[]> {
-  const csvText = process.env.TOAD_DUNE_CSV ?? "";
+  const csvText = process.env.TOAD_DUNE_CSV || loadLocalAirdropCsv();
   if (!csvText) return [];
   return parseCsv(csvText);
 }
@@ -72,7 +90,7 @@ function normalizeAddress(address: string): string {
 
 function parseNumeric(value: string | undefined): number {
   if (!value) return 0;
-  const cleaned = value.replace(/[,$\s]/g, "").trim();
+  const cleaned = value.replace(/[,\$\s]/g, "").trim();
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -97,8 +115,8 @@ export function getAirdropRowsForAddress(rows: DuneCsvRow[], targetAddress: stri
   const address = normalizeAddress(targetAddress);
   if (rows.length === 0) return { rows: [], amount: 0 };
 
-  const walletKey = findColumn(rows[0], ["wallet", "address", "recipient", "to_address", "owner", "from"]);
-  const amountKey = findColumn(rows[0], ["amount", "value", "token_amount", "to_amount", "airdrop_amount"]);
+  const walletKey = findColumn(rows[0], WALLET_COLUMN_CANDIDATES);
+  const amountKey = findColumn(rows[0], AMOUNT_COLUMN_CANDIDATES);
   if (!walletKey || !amountKey) return { rows: [], amount: 0 };
 
   const hits = rows.filter((row) => normalizeAddress(row[walletKey]) === address);
@@ -109,8 +127,8 @@ export function getAirdropRowsForAddress(rows: DuneCsvRow[], targetAddress: stri
 export function buildLeaderboardEntries(rows: DuneCsvRow[], priceUsd: number): LeaderboardEntry[] {
   if (rows.length === 0) return [];
 
-  const walletKey = findColumn(rows[0], ["wallet", "address", "recipient", "to_address", "owner", "from"]);
-  const amountKey = findColumn(rows[0], ["amount", "value", "token_amount", "to_amount", "airdrop_amount"]);
+  const walletKey = findColumn(rows[0], WALLET_COLUMN_CANDIDATES);
+  const amountKey = findColumn(rows[0], AMOUNT_COLUMN_CANDIDATES);
   if (!walletKey || !amountKey) return [];
 
   const totals = new Map<string, { totalAmount: number; maxAmount: number; minAmount: number; transfers: number }>();
@@ -258,22 +276,6 @@ export async function buildTraderProfile(address: string): Promise<TraderProfile
       risk: 56,
       patience: 48,
       activity: 60,
-      profitability: trades.length > 0 ? 65 : 0,
-    },
-    personality: {
-      id: "whale-toad",
-      name: "Whale TOAD",
-      emoji: "🐋",
-      tagline: "Status: On-chain collector.",
-      description: "This wallet shows TOAD accumulation from the Dune transfer dataset.",
-      quote: "I keep my position deep in the swamp.",
-      accent: "toad",
-      confidence: 68,
-      reasons: [
-        `Total TOAD observed: ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
-        `${trades.length.toLocaleString()} transfers seen in Dune data.`,
-      ],
-      alternates: [],
     },
     trades,
   };
