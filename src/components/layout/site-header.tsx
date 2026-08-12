@@ -9,13 +9,9 @@ import { Button } from "@/components/ui/button";
 import { ToadSprite } from "@/components/mascot/toad-sprite";
 import { NetworkIndicator } from "./network-indicator";
 import { WalletSearch } from "@/components/shared/wallet-search";
-import { ConnectWalletButton } from "@/components/shared/connect-wallet-button";
 
 export const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
-  { href: "/whales", label: "Whale Feed" },
-  { href: "/traders", label: "Trader Profiles" },
-  { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 
 export function SiteHeader() {
@@ -87,7 +83,7 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2">
           {/* Desktop search */}
           <div className="hidden w-56 xl:block">
             <WalletSearch compact />
@@ -106,7 +102,6 @@ export function SiteHeader() {
           </Button>
 
           <NetworkIndicator className="hidden sm:flex" />
-          <ConnectWalletButton />
 
           {/* Mobile menu */}
           <Button

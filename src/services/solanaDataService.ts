@@ -348,8 +348,100 @@ class RpcToadDataSource implements ToadDataSource {
       return { wallet, holding };
     });
   }
-  async getTraderProfile(): Promise<TraderProfile | null> {
-    return this.notImplemented("getTraderProfile");
+  async getTraderProfile(address: string): Promise<TraderProfile | null> {
+    const addr = address.trim();
+    if (!isValidSolanaAddress(addr)) return null;
+
+    try {
+      // Fetch token accounts for the owner filtered by the mint
+      const result = await this.callRpc("getTokenAccountsByOwner", [addr, { mint: this.mint }, { encoding: "jsonParsed" }]);
+      const accounts = Array.isArray(result?.value) ? result.value : [];
+
+      let amount = 0;
+      for (const acc of accounts) {
+        const parsedToken = acc?.account?.data?.parsed?.info?.tokenAmount ?? acc?.account?.data?.parsed ?? null;
+        if (parsedToken) {
+          amount += this.parseTokenAmount(parsedToken);
+        } else if (acc?.account) {
+          amount += this.parseTokenAmount(acc.account);
+        }
+      }
+
+      // Try to fetch total supply from the RPC; fall back to bundled TOAD_TOKEN
+      let totalSupply = TOAD_TOKEN.totalSupply;
+      try {
+        const supplyRes = await this.callRpc("getTokenSupply", [this.mint]);
+        const val = supplyRes?.value;
+        if (val) {
+          if (typeof val.uiAmount === "number") totalSupply = val.uiAmount;
+          else if (typeof val.amount === "string" && typeof val.decimals === "number") {
+            totalSupply = Number(val.amount) / Math.pow(10, val.decimals);
+          }
+        }
+      } catch {
+        // ignore and use fallback
+      }
+
+      const price = await marketCapService.getPrice().catch(() => mockPriceSnapshot);
+      const usdValue = amount * (price?.priceUsd ?? mockPriceSnapshot.priceUsd);
+
+      const wallet: Wallet = {
+        address: addr,
+        badges: [],
+        firstSeen: Date.now(),
+        lastActive: Date.now(),
+      };
+
+      const holding: TokenHolding = {
+        address: addr,
+        mint: this.mint,
+        amount,
+        usdValue,
+        supplyPct: totalSupply ? (amount / totalSupply) * 100 : 0,
+        change24hPct: 0,
+        costBasisUsd: null,
+      };
+
+      const profile: TraderProfile = {
+        wallet,
+        holding,
+        pnl: { realizedUsd: 0, unrealizedUsd: usdValue, totalUsd: usdValue, roiPct: 0, investedUsd: 0 },
+        metrics: {
+          totalTrades: 0,
+          buyCount: 0,
+          sellCount: 0,
+          buySellRatio: 0,
+          winRatePct: 0,
+          totalVolumeUsd: 0,
+          largestBuyUsd: 0,
+          largestSellUsd: 0,
+          bestTradeUsd: 0,
+          worstTradeUsd: 0,
+          avgHoldHours: 0,
+          maxHoldHours: 0,
+          tradesPerDay: 0,
+          fullExitRate: 0,
+        },
+        scores: { conviction: 0, risk: 0, patience: 0, activity: 0, profitability: 0 },
+        personality: {
+          id: "tadpole",
+          name: "Holder",
+          emoji: "🐸",
+          tagline: "On-chain holder",
+          description: "Live holdings from RPC",
+          quote: "",
+          accent: "toad",
+          confidence: 0,
+          reasons: [],
+          alternates: [],
+        },
+        trades: [],
+      };
+
+      return profile;
+    } catch {
+      return null;
+    }
   }
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
     return this.notImplemented("getLeaderboard");
